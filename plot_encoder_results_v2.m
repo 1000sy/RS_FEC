@@ -20,8 +20,8 @@
          'r*', 'MarkerSize', 8, 'LineWidth', 1.5, 'DisplayName', 'Parity Words');
     
     % Parity Expansion part (N=127)
-    stem(word_indices(128), encoded_words(128), ...
-         'k.', 'MarkerSize', 10, 'DisplayName', 'Parity Expansion (Empty)');
+    %stem(word_indices(128), encoded_words(128), ...
+    %     'k.', 'MarkerSize', 10, 'DisplayName', 'Parity Expansion (Empty)');
     
     grid on;
     hold off;
