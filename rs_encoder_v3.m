@@ -6,8 +6,8 @@
     % It strictly adheres to the hardware implementation principles.
     
     %% 1. Initialization and Input Validation
-    crc_enable = 1;
-    NUM_WORDS = 120;
+    crc_enable = 0;
+    NUM_WORDS = 121;
 
     BIT_WIDTH = 19; % Input word width including is_k bit
     input_bits = randi([0 1], NUM_WORDS * BIT_WIDTH, 1);
@@ -147,41 +147,94 @@
         encoded_slice = [data_symbols; parity_symbols]; % 121 data + 6 parity
     end
     
-    %% --- Helper Function: Repacking Slices ---
-    function final_words = repack_slices(slice_A, slice_B, slice_C, is_k_vec)
-        % Repacks the three 127-symbol encoded slices into 128 final words.
-        final_words = zeros(128, 1, 'uint32');
+    % %% --- Helper Function: Repacking Slices ---
+    % function final_words = repack_slices(slice_A, slice_B, slice_C, is_k_vec)
+    %     % Repacks the three 127-symbol encoded slices into 128 final words.
+    %     final_words = zeros(128, 1, 'uint32');
+    % 
+    %     % 1. Repack Data/CRC part (N = 0 to 120)
+    %     data_A = slice_A(1:121);
+    %     data_B = slice_B(1:121);
+    %     data_C = slice_C(1:121);
+    % 
+    %     data_part_18bit = bitor(bitor(bitshift(uint32(data_A), 12), ...
+    %                                   bitshift(uint32(data_B), 6)), ...
+    %                                   uint32(data_C));
+    % 
+    %     % Combine the 18-bit data with the original 1-bit is_k
+    %     final_words(1:121) = bitor(data_part_18bit, bitshift(uint32(is_k_vec), 18));
+    % 
+    %     % 2. Repack Parity part (N = 121 to 126)
+    %     parity_A = slice_A(122:127);
+    %     parity_B = slice_B(122:127);
+    %     parity_C = slice_C(122:127);
+    % 
+    %     for i = 1:6
+    %         pA = parity_A(i);
+    %         pB = parity_B(i);
+    %         pC = parity_C(i);
+    % 
+    %         parity_word_18bit = bitor(bitor(bitshift(uint32(pA), 12), ...
+    %                                         bitshift(uint32(pB), 6)), ...
+    %                                         uint32(pC));
+    % 
+    %         % is_k for parity words is always 0
+    %         final_words(121 + i) = parity_word_18bit;
+    %     end
+    % 
+    %     % 3. Final word (N=127) is for Parity Expansion, set to 0
+    %     final_words(128) = 0;
+    % end
+
+%% --- Helper Function: Repacking Slices (CORRECTED) ---
+function final_words = repack_slices(slice_A, slice_B, slice_C, is_k_vec)
+    % Repacks the three 127-symbol encoded slices into 128 final words.
+    final_words = zeros(128, 1, 'uint32');
+    
+    % 1. Repack Data/CRC part (N = 0 to 120)
+    data_A_7bit = slice_A(1:121);
+    data_B_7bit = slice_B(1:121);
+    data_C_7bit = slice_C(1:121);
+    
+    % *** 수정된 부분 시작 ***
+    % 7-bit 심볼에서 MSB(is_k)를 제거하고 6-bit 데이터만 추출 (Mask = 63 = 0x3F)
+    data_A_6bit = bitand(uint32(data_A_7bit), 63);
+    data_B_6bit = bitand(uint32(data_B_7bit), 63);
+    data_C_6bit = bitand(uint32(data_C_7bit), 63);
+    
+    % 3개의 6-bit 데이터를 18-bit로 재조립
+    data_part_18bit = bitor(bitor(bitshift(data_A_6bit, 12), ...
+                                  bitshift(data_B_6bit, 6)), ...
+                                  data_C_6bit);
+    % *** 수정된 부분 끝 ***
         
-        % 1. Repack Data/CRC part (N = 0 to 120)
-        data_A = slice_A(1:121);
-        data_B = slice_B(1:121);
-        data_C = slice_C(1:121);
+    % Combine the 18-bit data with the original 1-bit is_k
+    final_words(1:121) = bitor(data_part_18bit, bitshift(uint32(is_k_vec), 18));
+    
+    % 2. Repack Parity part (N = 121 to 126)
+    parity_A = slice_A(122:127); % 패리티 심볼은 is_k=0 이므로 7비트라도 63 이하임
+    parity_B = slice_B(122:127);
+    parity_C = slice_C(122:127);
+    
+    for i = 1:6
+        pA = parity_A(i);
+        pB = parity_B(i);
+        pC = parity_C(i);
         
-        data_part_18bit = bitor(bitor(bitshift(uint32(data_A), 12), ...
-                                      bitshift(uint32(data_B), 6)), ...
-                                      uint32(data_C));
+        % 패리티는 7비트(최대 127)이지만, MSB(is_k)는 항상 0이므로
+        % 6비트 마스킹(bitand(..., 63))은 사실 필요 없으나,
+        % 데이터 경로와 일관성을 맞추기 위해 6비트만 사용한다고 가정합니다.
+        % (만약 패리티도 7비트 심볼을 그대로 쓴다면 18비트가 아닌 21비트가 필요합니다)
+        % RS 인코더 출력이 7비트이므로, 6비트만 잘라서 쓰는 것이 맞습니다.
         
-        % Combine the 18-bit data with the original 1-bit is_k
-        final_words(1:121) = bitor(data_part_18bit, bitshift(uint32(is_k_vec), 18));
+        parity_word_18bit = bitor(bitor(bitshift(bitand(uint32(pA), 63), 12), ...
+                                        bitshift(bitand(uint32(pB), 63), 6)), ...
+                                        bitand(uint32(pC), 63));
         
-        % 2. Repack Parity part (N = 121 to 126)
-        parity_A = slice_A(122:127);
-        parity_B = slice_B(122:127);
-        parity_C = slice_C(122:127);
-        
-        for i = 1:6
-            pA = parity_A(i);
-            pB = parity_B(i);
-            pC = parity_C(i);
-            
-            parity_word_18bit = bitor(bitor(bitshift(uint32(pA), 12), ...
-                                            bitshift(uint32(pB), 6)), ...
-                                            uint32(pC));
-            
-            % is_k for parity words is always 0
-            final_words(121 + i) = parity_word_18bit;
-        end
-        
-        % 3. Final word (N=127) is for Parity Expansion, set to 0
-        final_words(128) = 0;
+        % is_k for parity words is always 0 (as per spec table)
+        final_words(121 + i) = parity_word_18bit;
     end
+    
+    % 3. Final word (N=127) is for Parity Expansion, set to 0
+    final_words(128) = 0;
+end
