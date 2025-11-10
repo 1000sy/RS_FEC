@@ -1,6 +1,8 @@
-function [decoded_bits, stats] = rs_decoder_main(encoded_words, tables, crc_enable)
+% function [decoded_bits, stats] = rs_decoder_main(encoded_words, tables, crc_enable)
     % rs_decoder_main - Block-level RS-FEC decoder orchestrator
     % encoded_words: 128x1 uint32, each word is 19-bit {is_k, din[17:0]}
+    
+    poly_utils = gf_poly_utils(tables);
 
     if numel(encoded_words) ~= 128
         error('encoded_words must have 128 entries');
@@ -25,12 +27,12 @@ function [decoded_bits, stats] = rs_decoder_main(encoded_words, tables, crc_enab
     end
 
     % 5) Convert words to bits (LSB-first per word)
-    decoded_bits = words_to_bits(words_19bit);
+    decoded_bits = words_to_bits(words_19bit, crc_enable);
 
     % 6) Aggregate stats
     stats.corrected_errors = double(stats_A.num_errors) + double(stats_B.num_errors) + double(stats_C.num_errors);
     stats.uncorrectable = logical(stats_A.uncorrectable || stats_B.uncorrectable || stats_C.uncorrectable);
-end
+% end
 
 % ===== Helpers =====
 function [sliceA, sliceB, sliceC, is_k] = unpack_slices(words)
@@ -46,9 +48,14 @@ function [sliceA, sliceB, sliceC, is_k] = unpack_slices(words)
         w = uint32(words(n));
         is_k(n) = uint8(bitget(w,19));
         d = bitand(w, BIT_MASK_18);
-        sliceA(n) = uint8(bitand(bitshift(d,-12), uint32(63)));
-        sliceB(n) = uint8(bitand(bitshift(d,-6),  uint32(63)));
-        sliceC(n) = uint8(bitand(d,                      uint32(63)));
+        a6 = uint8(bitand(bitshift(d,-12), uint32(63)));
+        b6 = uint8(bitand(bitshift(d,-6),  uint32(63)));
+        c6 = uint8(bitand(d,                      uint32(63)));
+        % Reconstruct 7-bit symbols: MSB (bit6) = is_k
+        msb = bitshift(is_k(n),6);
+        sliceA(n) = bitor(a6, msb);
+        sliceB(n) = bitor(b6, msb);
+        sliceC(n) = bitor(c6, msb);
     end
 
     % Parity part N=122..127 (6 words)
@@ -56,7 +63,8 @@ function [sliceA, sliceB, sliceC, is_k] = unpack_slices(words)
         w = uint32(words(121+i));
         d = bitand(w, BIT_MASK_18);
         idx = 121 + i; % 122..127
-        sliceA(idx) = uint8(bitand(bitshift(d,-12), uint32(63)));
+        % Parity words have is_k=0 -> MSB=0
+        sliceA(idx) = uint8(bitand(bitshift(d,-12), uint32(63))); % 6 LSBs
         sliceB(idx) = uint8(bitand(bitshift(d,-6),  uint32(63)));
         sliceC(idx) = uint8(bitand(d,                      uint32(63)));
     end
@@ -64,9 +72,18 @@ end
 
 function words = repack_data(A, B, C, is_k)
     % Pack 121 corrected data symbols back to 19-bit words
-    words = zeros(121,1,'uint32');
-    d18 = bitor(bitor(bitshift(uint32(A(1:121)),12), bitshift(uint32(B(1:121)),6)), uint32(C(1:121)));
-    words(1:121) = bitor(d18, bitshift(uint32(is_k),18));
+    % words = zeros(121,1,'uint32');
+    %d18 = bitor(bitor(bitshift(uint32(A(1:121)),12), bitshift(uint32(B(1:121)),6)), uint32(C(1:121)));
+    %words(1:121) = bitor(d18, bitshift(uint32(is_k),18));
+    A_6bit = bitand(uint32(A(1:121)), 63);
+    B_6bit = bitand(uint32(B(1:121)), 63);
+    C_6bit = bitand(uint32(C(1:121)), 63);
+
+    % 3개의 6-bit 데이터를 18-bit로 재조립
+    d18 = bitor(bitor(bitshift(A_6bit, 12), bitshift(B_6bit, 6)), C_6bit);
+
+    % 18-bit 데이터와 1-bit is_k를 합쳐 19-bit 워드 생성
+    words = bitor(d18, bitshift(uint32(is_k), 18));
 end
 
 function pass = crc_check(words)
@@ -96,11 +113,23 @@ function crc_val = compute_crc_lfsr(data_words_19bit)
     crc_val = bitand(lfsr, uint32(hex2dec('3FFFF')));
 end
 
-function bits = words_to_bits(words)
+function bits = words_to_bits(words, crc_enable)
     % Flatten 19-bit words to a bit vector (LSB-first per word)
-    N = numel(words);
-    bits = zeros(N*19,1,'uint8');
+    BIT_WIDTH = 19;
+
+    if crc_enable
+        num_words = 120; % CRC 모드: 120개 데이터 워드만 변환
+    else
+        num_words = 121; % CRC 비활성: 121개 데이터 워드 변환
+    end
+
+    % 변환할 워드만 선택
+    words_to_convert = words(1:num_words);
+    N = numel(words_to_convert);
+
+    bits = zeros(N * BIT_WIDTH, 1, 'uint8');
     idx = 1;
+    
     for i=1:N
         w = uint32(words(i));
         for b = 0:18
@@ -109,4 +138,3 @@ function bits = words_to_bits(words)
         end
     end
 end
-
