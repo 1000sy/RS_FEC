@@ -57,13 +57,20 @@
     % Hardware equivalent: Bit wiring/selection
     % Extract 18-bit data portion {din[17:0]} for RS encoding
     data_part_18bit = bitand(rs_input_words_19bit, hex2dec('3FFFF'));
-    
-    symbols_slice_A = uint8(bitand(bitshift(data_part_18bit, -12), 63)); % din[17:12]
-    symbols_slice_B = uint8(bitand(bitshift(data_part_18bit, -6),  63)); % din[11:6]
-    symbols_slice_C = uint8(bitand(data_part_18bit, 63));               % din[5:0]
-    
     % Extract is_k vector for final repacking
     is_k_vec = uint8(bitget(rs_input_words_19bit(1:121), BIT_WIDTH));
+
+    % 6-bit LSB 부분 추출
+    lsbs_A = uint8(bitand(bitshift(data_part_18bit, -12), 63)); % din[17:12]
+    lsbs_B = uint8(bitand(bitshift(data_part_18bit, -6),  63)); % din[11:6]
+    lsbs_C = uint8(bitand(data_part_18bit, 63));               % din[5:0]
+
+    % 7-bit 심볼 재조립: MSB (bit 6) = is_k
+    msb = bitshift(is_k_vec, 6);
+    
+    symbols_slice_A = bitor(lsbs_A, msb); % [is_k, din[17:12]]
+    symbols_slice_B = bitor(lsbs_B, msb); % [is_k, din[11:6]]
+    symbols_slice_C = bitor(lsbs_C, msb); % [is_k, din[5:0]]
     
     %% 6. Parallel RS Encoding for each slice
     % Hardware equivalent: Three parallel RS encoder LFSRs (Fig 5-13)
