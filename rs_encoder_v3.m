@@ -6,8 +6,8 @@
     % It strictly adheres to the hardware implementation principles.
     
     %% 1. Initialization and Input Validation
-    crc_enable = 0;
-    NUM_WORDS = 121;
+    crc_enable = 1;
+    NUM_WORDS = 120;
 
     BIT_WIDTH = 19; % Input word width including is_k bit
     input_bits = randi([0 1], NUM_WORDS * BIT_WIDTH, 1);
@@ -74,6 +74,9 @@
     
     %% 6. Parallel RS Encoding for each slice
     % Hardware equivalent: Three parallel RS encoder LFSRs (Fig 5-13)
+    %encoded_slice_A = rs_encode_slice(symbols_slice_A, tables, g_poly_coeffs);
+    %encoded_slice_B = rs_encode_slice(symbols_slice_B, tables, g_poly_coeffs);
+    %encoded_slice_C = rs_encode_slice(symbols_slice_C, tables, g_poly_coeffs);
     encoded_slice_A = rs_encode_slice(symbols_slice_A, tables, g_poly_coeffs);
     encoded_slice_B = rs_encode_slice(symbols_slice_B, tables, g_poly_coeffs);
     encoded_slice_C = rs_encode_slice(symbols_slice_C, tables, g_poly_coeffs);
@@ -86,73 +89,108 @@
     
     %end
     
-    %% --- Helper Function: CRC-18 Calculation ---
-    function crc_val = compute_crc_lfsr(data_words_19bit)
-        % Implements the 18-bit CRC calculation based on Figure 5-14
-        % with corrected parameters as per the specification text.
+%% --- Helper Function: CRC-18 Calculation (BUG FIXED) ---
+function crc_val = compute_crc_lfsr(data_words_19bit)
+    % (BUG FIX: Cast all registers and inputs to uint32)
+    
+    lfsr = uint32(hex2dec('3FFFF')); % 18-bit register initialized to all 1s
+    poly_mask = uint32(hex2dec('BEA7'));
+    
+    for i = 1:length(data_words_19bit)
+        word = uint32(data_words_19bit(i)); % <-- uint32 캐스팅
         
-        % (B) Initial value: all-ones as per spec
-        lfsr = hex2dec('3FFFF'); % 18-bit register initialized to all 1s
-        
-        % (C) Correct poly_mask for g(x) = x^18 + x^15 + ... + 1
-        % using Galois LFSR (left shift, MSB feedback) convention.
-        poly_mask = hex2dec('BEA7');
-        
-        for i = 1:length(data_words_19bit)
-            word = data_words_19bit(i);
+        % (A) Process all 19 bits, LSB-first
+        for j = 0:18 % din[0]...din[17], is_k
+            input_bit = bitget(word, j + 1);
             
-            % (A) Process all 19 bits, LSB-first
-            for j = 0:18 % din[0]...din[17], is_k
-                input_bit = bitget(word, j + 1);
-                
-                % Hardware: Feedback is taken from the MSB (s17) of the register
-                feedback_bit = bitget(lfsr, 18);
-                
-                % Hardware: Register shifts left by 1 bit
-                lfsr = bitshift(lfsr, 1);
-                
-                % Hardware: Input bit is XORed with feedback and injected at LSB (s0)
-                lfsr = bitset(lfsr, 1, bitxor(input_bit, feedback_bit));
-                
-                % Hardware: If feedback is 1, XOR the register with the poly_mask
-                if (feedback_bit)
-                    lfsr = bitxor(lfsr, poly_mask);
-                end
+            % Hardware: Feedback is taken from the MSB (s17) of the register
+            feedback_bit = bitget(lfsr, 18);
+            
+            % Hardware: Register shifts left by 1 bit
+            lfsr = bitshift(lfsr, 1);
+            
+            % Hardware: Input bit is XORed with feedback and injected at LSB (s0)
+            lfsr = bitset(lfsr, 1, bitxor(input_bit, feedback_bit));
+            
+            % Hardware: If feedback is 1, XOR the register with the poly_mask
+            if (feedback_bit)
+                lfsr = bitxor(lfsr, poly_mask);
             end
         end
-        crc_val = bitand(lfsr, hex2dec('3FFFF')); % Final 18-bit result
+    end
+    crc_val = bitand(lfsr, uint32(hex2dec('3FFFF'))); % Final 18-bit result
+end
+
+
+
+%% --- Helper Function: Single Slice RS Encoding ---
+function encoded_slice = rs_encode_slice(data_symbols, tables, g_poly_coeffs)
+    % Implements the systematic RS encoder using a Galois LFSR (Fig 5-13)
+    
+    gf_add = @(a, b) bitxor(a, b);
+    function result = gf_multiply(a, b)
+        if a == 0 || b == 0, result = 0; return; end
+        log_a = tables.log(a + 1);
+        log_b = tables.log(b + 1);
+        log_sum = mod(double(log_a) + double(log_b), 127);
+        result = tables.exp(log_sum + 1);
+    end
+
+    % --- (BUG FIX) ---
+    % num_parity = length(g_poly_coeffs); % This is 7. WRONG.
+    num_parity = 6; % RS(127, 121) has 6 parity symbols
+    
+    g_coeffs = g_poly_coeffs(1:num_parity); % Extract g0..g5 only
+    
+    lfsr_state = zeros(1, num_parity, 'uint8'); % 6 registers
+    
+    for i = 1:length(data_symbols)
+        input_symbol = data_symbols(i);
+        feedback = gf_add(input_symbol, lfsr_state(end)); % lfsr_state(6)
+        
+        for j = num_parity:-1:2
+            % term = gf_multiply(feedback, g_poly_coeffs(j)); % WRONG
+            term = gf_multiply(feedback, g_coeffs(j)); % Use g_coeffs(2..6) -> g1..g5
+            lfsr_state(j) = gf_add(lfsr_state(j-1), term);
+        end
+
+        lfsr_state(1) = gf_multiply(feedback, g_coeffs(1)); % Use g_coeffs(1) -> g0
     end
     
-    %% --- Helper Function: Single Slice RS Encoding ---
-    function encoded_slice = rs_encode_slice(data_symbols, tables, g_poly_coeffs)
-        % Implements the systematic RS encoder using a Galois LFSR (Fig 5-13)
-        
-        gf_add = @(a, b) bitxor(a, b);
-        function result = gf_multiply(a, b)
-            if a == 0 || b == 0, result = 0; return; end
-            log_a = tables.log(a + 1);
-            log_b = tables.log(b + 1);
-            log_sum = mod(double(log_a) + double(log_b), 127);
-            result = tables.exp(log_sum + 1);
-        end
-    
-        num_parity = length(g_poly_coeffs); % Should be 6
-        lfsr_state = zeros(1, num_parity, 'uint8');
-        
-        for i = 1:length(data_symbols)
-            input_symbol = data_symbols(i);
-            feedback = gf_add(input_symbol, lfsr_state(end));
-            
-            for j = num_parity:-1:2
-                term = gf_multiply(feedback, g_poly_coeffs(j));
-                lfsr_state(j) = gf_add(lfsr_state(j-1), term);
-            end
-            lfsr_state(1) = gf_multiply(feedback, g_poly_coeffs(1));
-        end
-        
-        parity_symbols = lfsr_state';
-        encoded_slice = [data_symbols; parity_symbols]; % 121 data + 6 parity
-    end
+    parity_symbols = lfsr_state';
+    encoded_slice = [data_symbols; parity_symbols]; % 121 data + 6 parity
+end
+
+    % %% --- Helper Function: Single Slice RS Encoding ---
+    % function encoded_slice = rs_encode_slice(data_symbols, tables, g_poly_coeffs)
+    %     % Implements the systematic RS encoder using a Galois LFSR (Fig 5-13)
+    % 
+    %     gf_add = @(a, b) bitxor(a, b);
+    %     function result = gf_multiply(a, b)
+    %         if a == 0 || b == 0, result = 0; return; end
+    %         log_a = tables.log(a + 1);
+    %         log_b = tables.log(b + 1);
+    %         log_sum = mod(double(log_a) + double(log_b), 127);
+    %         result = tables.exp(log_sum + 1);
+    %     end
+    % 
+    %     num_parity = length(g_poly_coeffs); % Should be 6
+    %     lfsr_state = zeros(1, num_parity, 'uint8');
+    % 
+    %     for i = 1:length(data_symbols)
+    %         input_symbol = data_symbols(i);
+    %         feedback = gf_add(input_symbol, lfsr_state(end));
+    % 
+    %         for j = num_parity:-1:2
+    %             term = gf_multiply(feedback, g_poly_coeffs(j));
+    %             lfsr_state(j) = gf_add(lfsr_state(j-1), term);
+    %         end
+    %         lfsr_state(1) = gf_multiply(feedback, g_poly_coeffs(1));
+    %     end
+    % 
+    %     parity_symbols = lfsr_state';
+    %     encoded_slice = [data_symbols; parity_symbols]; % 121 data + 6 parity
+    % end
     
     % %% --- Helper Function: Repacking Slices ---
     % function final_words = repack_slices(slice_A, slice_B, slice_C, is_k_vec)
