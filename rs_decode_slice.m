@@ -7,11 +7,8 @@ function [decoded_symbols, stats] = rs_decode_slice(codeword_dp, tables)
 
     % Polynomial-descending order for syndrome evaluation:
     % r_126..r_0 = [data(121..1), parity(6..1)]
-    
-    % +++ BUG FIX 1: horzcat 오류 수정 +++
-    % 121x1 열 벡터와 6x1 열 벡터를 각각 전치(transpose)하여
-    % 1x121 및 1x6 행 벡터로 만든 후 수평 결합
-    cw_desc = [flipud(codeword_dp(1:121)).', flipud(codeword_dp(122:127)).'];
+    cw_desc = [codeword_dp(121:-1:1); codeword_dp(127:-1:122)];  % column이면 ; 로, row면 [,]
+
     % 1) Compute syndromes S1..S6
     syndromes = compute_syndromes(cw_desc, tables);
 
@@ -21,7 +18,6 @@ function [decoded_symbols, stats] = rs_decode_slice(codeword_dp, tables)
     end
 
     % 2) Berlekamp–Massey → lambda, omega
-    % +++ BUG FIX 2: poly_utils 인수 전달 +++
     [lambda, omega] = berlekamp_massey(syndromes, tables);
 
     % 3) Chien search → error degree indices (0..126)
@@ -44,7 +40,6 @@ function [decoded_symbols, stats] = rs_decode_slice(codeword_dp, tables)
     end
 
     % 4) Forney algorithm (parallel implementation)
-    % (BUG FIX 2: poly_utils를 이미 인수로 전달받음)
     poly_utils = gf_poly_utils(tables);
     error_values = forney_algorithm_parallel(error_positions, lambda, omega, tables, poly_utils);
 
@@ -54,6 +49,22 @@ function [decoded_symbols, stats] = rs_decode_slice(codeword_dp, tables)
 end
 
 % Map degree-indexed error positions to [data(1..121) parity(1..6)] order and correct
+% function corrected = apply_corrections_dp(codeword_dp, err_pos, err_val)
+%     n = 127;
+%     corrected = codeword_dp;
+%     for k = 1:length(err_pos)
+%         j = double(err_pos(k));        % degree index (0..126)
+%         p_desc = n - j;                % 1-based index in r126..r0
+%         if p_desc <= 121
+%             idx = 122 - p_desc;        % data index 1..121
+%         else
+%             idx = 249 - p_desc;        % parity index 122..127
+%         end
+%         corrected(idx) = bitxor(corrected(idx), err_val(k));
+%     end
+% end
+% 
+% 
 % function corrected = apply_corrections_dp(codeword_dp, err_pos, err_val, poly_utils)
 %     % codeword_dp는 127x1 열 벡터
 %     n = 127;
@@ -81,19 +92,12 @@ end
 %     end
 % end
 
-% Map degree-indexed error positions to [data(1..121) parity(1..6)] order and correct
 function corrected = apply_corrections_dp(codeword_dp, err_pos, err_val, poly_utils)
-    % codeword_dp는 LSB-first 127x1 열 벡터입니다.
-    % codeword_dp(1) = m0 (degree 6)
-    % codeword_dp(121) = m120 (degree 126)
-    % codeword_dp(122) = p0 (degree 0)
-    % codeword_dp(127) = p5 (degree 5)
-    
-    n = 127;
+    %n = 127;
     corrected = codeword_dp;
     for k = 1:length(err_pos)
         j = double(err_pos(k));           % degree index (0..126)
-        
+
         % +++ (BUG FIX) New LSB-first index mapping logic +++
         if j >= 6
             % Data part (degree 6..126)
@@ -107,7 +111,7 @@ function corrected = apply_corrections_dp(codeword_dp, err_pos, err_val, poly_ut
             idx = 122 + j;
         end
         % +++ (END BUG FIX) +++
-        
+
         if idx > 0 && idx <= 127
             corrected(idx) = poly_utils.gf_add(corrected(idx), err_val(k));
         else

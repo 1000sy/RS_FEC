@@ -6,8 +6,8 @@
     % It strictly adheres to the hardware implementation principles.
     
     %% 1. Initialization and Input Validation
-    crc_enable = 1;
-    NUM_WORDS = 120;
+    crc_enable = 0;
+    NUM_WORDS = 121;
 
     BIT_WIDTH = 19; % Input word width including is_k bit
     input_bits = randi([0 1], NUM_WORDS * BIT_WIDTH, 1);
