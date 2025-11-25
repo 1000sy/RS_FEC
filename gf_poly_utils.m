@@ -25,19 +25,19 @@ function utils = gf_poly_utils(tables)
         result = bitxor(uint8(a), uint8(b));
     end
 
-    function result = gf_multiply(a, b)
-        % GF(2^m) 곱셈 (Log/Exp 테이블 사용)
-        % gf_arithmetic.m에서 사용한 방식과 동일
-        if a == 0 || b == 0
-            result = 0;
-            return;
-        end
-        % MATLAB 인덱스는 1부터 시작하므로 (값 + 1)
-        log_a = tables.log(a + 1);
-        log_b = tables.log(b + 1);
-        log_sum = mod(double(log_a) + double(log_b), n);
-        result = tables.exp(log_sum + 1);
-    end
+    % function result = gf_multiply(a, b)
+    %     % GF(2^m) 곱셈 (Log/Exp 테이블 사용)
+    %     % gf_arithmetic.m에서 사용한 방식과 동일
+    %     if a == 0 || b == 0
+    %         result = 0;
+    %         return;
+    %     end
+    %     % MATLAB 인덱스는 1부터 시작하므로 (값 + 1)
+    %     log_a = tables.log(a + 1);
+    %     log_b = tables.log(b + 1);
+    %     log_sum = mod(double(log_a) + double(log_b), n);
+    %     result = tables.exp(log_sum + 1);
+    % end
 
     function result = gf_inverse(a)
         % GF(2^m) 역원 계산

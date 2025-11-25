@@ -7,7 +7,12 @@ function [decoded_symbols, stats] = rs_decode_slice(codeword_dp, tables)
 
     % Polynomial-descending order for syndrome evaluation:
     % r_126..r_0 = [data(121..1), parity(6..1)]
-    cw_desc = [codeword_dp(121:-1:1); codeword_dp(127:-1:122)];  % column이면 ; 로, row면 [,]
+
+    %cw_desc = [codeword_dp(121:-1:1); codeword_dp(127:-1:122)];
+    cw_desc = [codeword_dp(1:121); codeword_dp(122:127)];
+    % cw_desc = [fliplr(codeword_dp(1:121)); fliplr(codeword_dp(122:127))];
+    % cw_desc = fliplr(cw_desc(:)')';
+    % cw_desc = codeword_dp(127:-1:1);
 
     % 1) Compute syndromes S1..S6
     syndromes = compute_syndromes(cw_desc, tables);
@@ -48,50 +53,6 @@ function [decoded_symbols, stats] = rs_decode_slice(codeword_dp, tables)
     decoded_symbols = corrected(1:121); % 121x1 열 벡터 반환
 end
 
-% Map degree-indexed error positions to [data(1..121) parity(1..6)] order and correct
-% function corrected = apply_corrections_dp(codeword_dp, err_pos, err_val)
-%     n = 127;
-%     corrected = codeword_dp;
-%     for k = 1:length(err_pos)
-%         j = double(err_pos(k));        % degree index (0..126)
-%         p_desc = n - j;                % 1-based index in r126..r0
-%         if p_desc <= 121
-%             idx = 122 - p_desc;        % data index 1..121
-%         else
-%             idx = 249 - p_desc;        % parity index 122..127
-%         end
-%         corrected(idx) = bitxor(corrected(idx), err_val(k));
-%     end
-% end
-% 
-% 
-% function corrected = apply_corrections_dp(codeword_dp, err_pos, err_val, poly_utils)
-%     % codeword_dp는 127x1 열 벡터
-%     n = 127;
-%     corrected = codeword_dp;
-%     for k = 1:length(err_pos)
-%         j = double(err_pos(k));           % degree index (0..126)
-% 
-%         % 다항식 차수 j를 1-based 인덱스 p_desc (1..127)로 변환
-%         % j=126 (r_126) -> p_desc=1
-%         % j=0   (r_0)   -> p_desc=127
-%         p_desc = n - j;
-% 
-%         % p_desc를 codeword_dp (1..127) 인덱스로 매핑
-%         if p_desc <= 121
-%             % Data part: p_desc=1 -> idx=121; p_desc=121 -> idx=1
-%             idx = 122 - p_desc;
-%         else
-%             % Parity part: p_desc=122 -> idx=127; p_desc=127 -> idx=122
-%             idx = 127 - (p_desc - 122); % 249 - p_desc 와 동일
-%         end
-% 
-%         if idx > 0 && idx <= 127
-%             corrected(idx) = poly_utils.gf_add(corrected(idx), err_val(k));
-%         end
-%     end
-% end
-
 function corrected = apply_corrections_dp(codeword_dp, err_pos, err_val, poly_utils)
     %n = 127;
     corrected = codeword_dp;
@@ -103,7 +64,8 @@ function corrected = apply_corrections_dp(codeword_dp, err_pos, err_val, poly_ut
             % Data part (degree 6..126)
             % j=6   -> idx=1
             % j=126 -> idx=121
-            idx = j - 5;
+            % idx = j - 5; 이게 틀린거고
+            idx = 127 - j;
         else
             % Parity part (degree 0..5)
             % j=0   -> idx=122

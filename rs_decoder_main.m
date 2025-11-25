@@ -58,15 +58,33 @@ function [sliceA, sliceB, sliceC, is_k] = unpack_slices(words)
         sliceC(n) = bitor(c6, msb);
     end
 
+    parity_expansion = uint32(words(128));
+
     % Parity part N=122..127 (6 words)
     for i = 1:6
         w = uint32(words(121+i));
         d = bitand(w, BIT_MASK_18);
         idx = 121 + i; % 122..127
+
+        % 여기부터...수정요요
+        % 하위 6비트 추출
+        pA_lower = bitand(bitshift(d,-12), 63);
+        pB_lower = bitand(bitshift(d,-6),  63);
+        pC_lower = bitand(d,               63);
+
+        % +++ Parity Expansion에서 MSB 복원 +++
+        pA_msb = bitget(parity_expansion, 3*(i-1) + 1);
+        pB_msb = bitget(parity_expansion, 3*(i-1) + 2);
+        pC_msb = bitget(parity_expansion, 3*(i-1) + 3);
+        % 수정끝이요
+
         % Parity words have is_k=0 -> MSB=0
-        sliceA(idx) = uint8(bitand(bitshift(d,-12), uint32(63))); % 6 LSBs
-        sliceB(idx) = uint8(bitand(bitshift(d,-6),  uint32(63)));
-        sliceC(idx) = uint8(bitand(d,                      uint32(63)));
+        % sliceA(idx) = uint8(bitand(bitshift(d,-12), uint32(63))); % 6 LSBs
+        % sliceB(idx) = uint8(bitand(bitshift(d,-6),  uint32(63)));
+        % sliceC(idx) = uint8(bitand(d,                      uint32(63)));
+        sliceA(idx) = bitor(uint8(pA_lower), bitshift(uint8(pA_msb),6));
+        sliceB(idx) = bitor(uint8(pB_lower), bitshift(uint8(pB_msb),6));
+        sliceC(idx) = bitor(uint8(pC_lower), bitshift(uint8(pC_msb),6));
     end
 end
 
@@ -95,13 +113,22 @@ function pass = crc_check(words)
 end
 
 function crc_val = compute_crc_lfsr(data_words_19bit)
-    % Same bit-serial LFSR as encoder (LSB-first)
+    % CRC-18 계산: 18-bit 데이터만 처리 (is_k 비트 제외)
+    % 입력: 19-bit 워드 배열 (is_k 포함)
+    % 디코더에서는 is_k를 제외한 18-bit만 CRC 계산에 사용
+    
     lfsr = uint32(hex2dec('3FFFF'));           % 18-bit all ones
     poly_mask = uint32(hex2dec('BEA7'));       % g(x)=x^18+x^15+...+1
+    BIT_MASK_18 = uint32(hex2dec('3FFFF'));
+    
     for i = 1:length(data_words_19bit)
         word = uint32(data_words_19bit(i));
-        for j = 0:18
-            inb = bitget(word, j+1);
+        % is_k 제외한 18-bit 데이터만 추출
+        data_18bit = bitand(word, BIT_MASK_18);
+        
+        % Process 18 bits only (din[0]...din[17]), LSB-first
+        for j = 0:17  % 18비트만 처리 (is_k 제외)
+            inb = bitget(data_18bit, j+1);
             fb  = bitget(lfsr, 18);
             lfsr = bitshift(lfsr,1);
             lfsr = bitset(lfsr,1, bitxor(inb, fb));

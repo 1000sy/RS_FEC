@@ -11,6 +11,7 @@ function syndromes = compute_syndromes(received_symbols, tables)
     %
     %   출력:
     %       syndromes:        1x6 uint8 벡터 (S1, S2, S3, S4, S5, S6)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
     
     % --- 1. 파라미터 및 GF 연산 함수 정의 ---
     
@@ -24,11 +25,11 @@ function syndromes = compute_syndromes(received_symbols, tables)
         error('입력 심볼의 길이가 %d여야 합니다 (현재 %d).', n, length(received_symbols));
     end
     
-    % 로컬 GF 연산 함수 (gf_poly_utils.m의 핵심 부분)
+    % 로컬 GF 연산 함수
     function result = gf_add(a, b)
         result = bitxor(uint8(a), uint8(b));
     end
-    
+
     function result = gf_multiply(a, b)
         if a == 0 || b == 0
             result = 0;
@@ -56,24 +57,28 @@ function syndromes = compute_syndromes(received_symbols, tables)
     end
 
     % --- 3. 호너의 방법(Horner's Method) 수행 ---
-    %
     % 127 사이클 동안 6개의 신드롬을 병렬로 계산합니다.
-    % S_new = (S_old * α^i) + r_k
+    % S_i = R(α^i) = ((...(r_126*α^i + r_125)*α^i + ...)*α^i + r_0)
+    % 공식: S_new = (S_old * α^i) + r_k -> 곱셈 후 덧셈
     %
     % received_symbols(1) = r_126 (x^126의 계수)
     % ...
     % received_symbols(127) = r_0 (x^0의 계수)
+    %
+    % 호너의 방법: 고차항부터 처리해야 함 (r_126 → r_0 순서)
     
-    for j = 1:n  % 127 사이클 (심볼) 반복 (j=1은 r_126, j=127은 r_0)
+    for j = 1:n  % 127 사이클 (심볼) 반복: j=1은 r_126, j=127은 r_0
         r_k = received_symbols(j);
         
         for i = 1:num_syndromes % 6개 신드롬 병렬 계산
             alpha_i = alpha_powers(i);
             S_old = S_regs(i);
             
-            % S_new = (S_old * α^i) + r_k
-            S_new = gf_add(gf_multiply(S_old, alpha_i), r_k);
-            
+            % 호너의 방법: S_new = (S_old * α^i) + r_k
+            % 먼저 S_old를 α^i와 곱한 후, r_k를 더함
+            first_mul = gf_multiply(S_old, alpha_i);
+            S_new = gf_add(first_mul, r_k);
+            % S_new = gf_add(gf_multiply(S_old, alpha_i), r_k);
             S_regs(i) = S_new;
         end
     end
